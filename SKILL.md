@@ -4,7 +4,7 @@ description: "自动刷新乐享 MCP access_token。通过 Playwright 访问 lex
 description_zh: "自动刷新乐享 MCP Token"
 description_en: "Auto-refresh Lexiang MCP access_token via browser automation"
 version: "1.1.0"
-homepage: https://github.com/user/refresh-lexiang-token
+homepage: https://github.com/ajaxhe/refresh-lexiang-token
 metadata: {}
 ---
 
