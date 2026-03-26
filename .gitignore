@@ -1,0 +1,8 @@
+# Cookie session data (contains login credentials)
+.cookies/
+
+# Debug screenshots
+*.png
+
+# Node modules
+node_modules/
