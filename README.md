@@ -10,6 +10,7 @@
 - 📦 不硬编码任何路径，适配不同的安装环境
 - 🔀 跨平台支持（WorkBuddy / OpenClaw / mcporter）
 - 🔐 支持 URL query 和 Bearer Header 两种认证方式
+- 🌐 支持通过 SSH 推送 token 到远程服务器（适用于无 GUI 的服务器）
 
 ## 安装
 
@@ -17,11 +18,11 @@
 
 ```bash
 # WorkBuddy
-git clone https://github.com/<your-username>/refresh-lexiang-token.git \
+git clone https://github.com/ajaxhe/refresh-lexiang-token.git \
   ~/.workbuddy/skills/refresh-lexiang-token
 
 # OpenClaw
-git clone https://github.com/<your-username>/refresh-lexiang-token.git \
+git clone https://github.com/ajaxhe/refresh-lexiang-token.git \
   ~/.openclaw/skills/refresh-lexiang-token
 
 # 如果两个平台都用，可以在一处安装后创建软链
@@ -57,6 +58,18 @@ npx tsx ~/.openclaw/skills/refresh-lexiang-token/scripts/refresh-token.ts --head
 # 指定额外配置文件
 npx tsx ~/.openclaw/skills/refresh-lexiang-token/scripts/refresh-token.ts \
   --config-files "/path/to/config1.json,/path/to/config2.json"
+
+# 刷新后推送到远程服务器（自动发现远程配置文件）
+npx tsx ~/.openclaw/skills/refresh-lexiang-token/scripts/refresh-token.ts \
+  --headless --push-to "root@your-server"
+
+# 推送到指定的远程配置文件
+npx tsx ~/.openclaw/skills/refresh-lexiang-token/scripts/refresh-token.ts \
+  --headless --push-to "root@your-server:/root/.mcporter/mcporter.json"
+
+# 同时推送到多台服务器
+npx tsx ~/.openclaw/skills/refresh-lexiang-token/scripts/refresh-token.ts \
+  --headless --push-to "root@server1,root@server2"
 ```
 
 ## 工作原理
@@ -87,6 +100,7 @@ npx tsx ~/.openclaw/skills/refresh-lexiang-token/scripts/refresh-token.ts \
 | `--cookie-dir` | `<skill>/.cookies` | Cookie 持久化目录 |
 | `--headless` | 否 | 无头模式 |
 | `--timeout` | 120000 | 超时时间 (ms) |
+| `--push-to` | 无 | SSH 推送目标（`user@host` 或 `user@host:/path`，逗号分隔多个） |
 
 ## 定时自动刷新（Automation）
 
@@ -106,6 +120,26 @@ Agent 会自动创建 Automation，配置如下：
 | 频率 | 每天 11:00 |
 | 调度规则 | `FREQ=DAILY;BYHOUR=11;BYMINUTE=0` |
 | 执行命令 | `npx tsx <skill_path>/scripts/refresh-token.ts --headless` |
+
+### 同步到远程服务器
+
+如果你有一台无 GUI 的 Linux 服务器也运行了乐享 MCP（如 OpenClaw），可以用 `--push-to` 参数在刷新后自动将新 token 推送过去：
+
+```bash
+# 在定时任务中加上 --push-to
+npx tsx <skill_path>/scripts/refresh-token.ts --headless \
+  --push-to "root@your-server"
+```
+
+**前提条件**：
+- 本机到远程服务器的 SSH 免密登录已配置（`ssh-copy-id`）
+- 远程服务器上有包含 `lxmcp_` token 的配置文件
+
+**工作原理**：
+1. 本机（有 GUI）通过 Playwright 刷新 token
+2. 通过 SSH 自动发现远程服务器上的配置文件
+3. 通过 SSH + sed 远程替换 token
+4. 远程服务器无需安装 Playwright 或浏览器
 
 你也可以根据需要调整频率，比如每天执行多次：
 

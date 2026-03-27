@@ -61,6 +61,15 @@ npx tsx "$SKILL_DIR/refresh-token.ts" --config-files "/path/to/mcp.json,/path/to
 
 # 方式3：无头模式（已有 cookie 时）
 npx tsx "$SKILL_DIR/refresh-token.ts" --headless
+
+# 方式4：刷新后推送到远程服务器
+npx tsx "$SKILL_DIR/refresh-token.ts" --headless --push-to "root@your-server"
+
+# 方式5：推送到指定的远程配置文件
+npx tsx "$SKILL_DIR/refresh-token.ts" --headless --push-to "root@your-server:/root/.mcporter/mcporter.json"
+
+# 方式6：同时推送到多个服务器（逗号分隔）
+npx tsx "$SKILL_DIR/refresh-token.ts" --headless --push-to "root@server1,root@server2"
 ```
 
 ### 参数说明
@@ -72,6 +81,7 @@ npx tsx "$SKILL_DIR/refresh-token.ts" --headless
 | `--headless` | 否 | 无头模式（需要已有有效 cookie） |
 | `--no-headless` | 默认 | 有头模式（可进行手动登录） |
 | `--timeout` | 120000 | 超时时间（毫秒） |
+| `--push-to` | 无 | 逗号分隔的 SSH 推送目标（`user@host` 或 `user@host:/path`） |
 
 ---
 

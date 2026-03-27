@@ -18,6 +18,7 @@
 import { chromium, type BrowserContext, type Page } from "playwright";
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 
 // ============================================================
 // 参数解析
@@ -27,6 +28,7 @@ interface Args {
   cookieDir: string; // cookie 持久化目录
   headless: boolean; // 是否无头模式
   timeout: number; // 等待超时（毫秒）
+  pushTo: string[]; // 远程推送目标列表，格式: user@host:/path/to/config.json
 }
 
 function parseArgs(): Args {
@@ -41,6 +43,7 @@ function parseArgs(): Args {
     cookieDir: path.join(skillDir, ".cookies"),
     headless: false, // 默认有头模式（首次需要登录）
     timeout: 120_000, // 2 分钟超时
+    pushTo: [],
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -59,6 +62,9 @@ function parseArgs(): Args {
         break;
       case "--timeout":
         result.timeout = parseInt(args[++i] || "120000", 10);
+        break;
+      case "--push-to":
+        result.pushTo = (args[++i] || "").split(",").filter(Boolean);
         break;
     }
   }
@@ -449,6 +455,103 @@ function discoverConfigFiles(): string[] {
 }
 
 // ============================================================
+// 远程推送 Token（通过 SSH）
+// ============================================================
+
+/**
+ * 通过 SSH 将新 token 推送到远程服务器的配置文件中。
+ *
+ * 格式: user@host 或 user@host:/path/to/config.json
+ * - 如果不指定路径，自动发现远程服务器上的配置文件
+ * - 通过 sed 命令远程替换 token，无需传输文件
+ */
+function pushTokenToRemote(
+  target: string,
+  tokenInfo: TokenInfo
+): { success: boolean; message: string } {
+  // 解析 target: user@host 或 user@host:/path/to/file
+  const colonIdx = target.indexOf(":");
+  let sshTarget: string;
+  let remotePaths: string[];
+
+  if (colonIdx > 0 && target[colonIdx + 1] === "/") {
+    // 指定了路径: user@host:/path/to/file
+    sshTarget = target.substring(0, colonIdx);
+    remotePaths = [target.substring(colonIdx + 1)];
+  } else {
+    // 未指定路径: user@host，自动发现
+    sshTarget = target;
+    remotePaths = [];
+  }
+
+  try {
+    // 如果没指定路径，先通过 SSH 自动发现远程配置文件
+    if (remotePaths.length === 0) {
+      console.log(`   🔍 自动发现 ${sshTarget} 上的配置文件...`);
+      const discoverCmd = `ssh -o ConnectTimeout=10 -o BatchMode=yes ${sshTarget} "grep -rl 'lxmcp_[a-f0-9]' ~/.workbuddy/mcp.json ~/.openclaw/mcp.json ~/.mcporter/mcp.json ~/.mcporter/mcporter.json 2>/dev/null"`;
+      try {
+        const result = execSync(discoverCmd, {
+          encoding: "utf-8",
+          timeout: 15_000,
+        }).trim();
+        remotePaths = result.split("\n").filter(Boolean);
+      } catch {
+        remotePaths = [];
+      }
+
+      if (remotePaths.length === 0) {
+        return {
+          success: false,
+          message: `未在 ${sshTarget} 上找到包含乐享 token 的配置文件`,
+        };
+      }
+      console.log(
+        `   📂 发现 ${remotePaths.length} 个文件: ${remotePaths.join(", ")}`
+      );
+    }
+
+    // 对每个远程文件执行 sed 替换
+    const results: string[] = [];
+    for (const remotePath of remotePaths) {
+      // 替换 access_token=lxmcp_xxx
+      const sedAccessToken = `sed -i 's/access_token=lxmcp_[a-f0-9]\\{16,\\}/access_token=${tokenInfo.accessToken}/g' '${remotePath}'`;
+      // 替换 Bearer lxmcp_xxx
+      const sedBearer = `sed -i 's/Bearer lxmcp_[a-f0-9]\\{16,\\}/Bearer ${tokenInfo.accessToken}/g' '${remotePath}'`;
+      // 替换 company_from（如果有）
+      const sedCompany = tokenInfo.companyFrom
+        ? `sed -i 's/company_from=[a-f0-9]\\{20,\\}/company_from=${tokenInfo.companyFrom}/g' '${remotePath}'`
+        : "";
+      // 替换 LEXIANG_TOKEN 环境变量形式
+      const sedEnvToken = `sed -i 's/\\(LEXIANG_TOKEN[\"'\\x27]*[[:space:]]*[:=][[:space:]]*[\"'\\x27]*\\)lxmcp_[a-f0-9]\\{16,\\}/\\1${tokenInfo.accessToken}/g' '${remotePath}'`;
+
+      const commands = [sedAccessToken, sedBearer, sedEnvToken];
+      if (sedCompany) commands.push(sedCompany);
+      const fullCmd = `ssh -o ConnectTimeout=10 -o BatchMode=yes ${sshTarget} "${commands.join(" && ")}"`;
+
+      try {
+        execSync(fullCmd, { encoding: "utf-8", timeout: 15_000 });
+        results.push(`✅ ${sshTarget}:${remotePath}`);
+      } catch (e) {
+        results.push(
+          `❌ ${sshTarget}:${remotePath} — ${(e as Error).message.split("\n")[0]}`
+        );
+      }
+    }
+
+    const successCount = results.filter((r) => r.startsWith("✅")).length;
+    return {
+      success: successCount > 0,
+      message: results.join("\n   "),
+    };
+  } catch (e) {
+    return {
+      success: false,
+      message: `SSH 推送失败 ${sshTarget}: ${(e as Error).message.split("\n")[0]}`,
+    };
+  }
+}
+
+// ============================================================
 // 主流程
 // ============================================================
 async function main() {
@@ -525,6 +628,21 @@ async function main() {
       );
     }
 
+    // 远程推送 token
+    if (args.pushTo.length > 0) {
+      console.log("\n🌐 推送 token 到远程服务器...");
+      const pushResults = args.pushTo.map((target) => {
+        console.log(`   📡 推送到 ${target}...`);
+        return pushTokenToRemote(target, tokenInfo);
+      });
+      pushResults.forEach((r) => console.log(`   ${r.message}`));
+
+      const pushSuccessCount = pushResults.filter((r) => r.success).length;
+      console.log(
+        `\n✅ 远程推送完成: ${pushSuccessCount}/${args.pushTo.length} 个目标成功`
+      );
+    }
+
     // 输出结构化结果（便于调用方解析）
     const resultJson = JSON.stringify(
       {
@@ -532,6 +650,7 @@ async function main() {
         accessToken: tokenInfo.accessToken,
         companyFrom: tokenInfo.companyFrom,
         updatedFiles: configFiles,
+        pushedTo: args.pushTo.length > 0 ? args.pushTo : undefined,
       },
       null,
       2
