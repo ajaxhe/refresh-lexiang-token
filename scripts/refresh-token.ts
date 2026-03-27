@@ -488,7 +488,7 @@ function pushTokenToRemote(
     // 如果没指定路径，先通过 SSH 自动发现远程配置文件
     if (remotePaths.length === 0) {
       console.log(`   🔍 自动发现 ${sshTarget} 上的配置文件...`);
-      const discoverCmd = `ssh -o ConnectTimeout=10 -o BatchMode=yes ${sshTarget} "grep -rl 'lxmcp_[a-f0-9]' ~/.workbuddy/mcp.json ~/.openclaw/mcp.json ~/.mcporter/mcp.json ~/.mcporter/mcporter.json 2>/dev/null"`;
+      const discoverCmd = `ssh -o ConnectTimeout=10 -o BatchMode=yes ${sshTarget} "grep -rl 'lxmcp_[a-f0-9]' ~/.workbuddy/mcp.json ~/.openclaw/mcp.json ~/.openclaw/openclaw.json ~/.mcporter/mcp.json ~/.mcporter/mcporter.json 2>/dev/null || true"`;
       try {
         const result = execSync(discoverCmd, {
           encoding: "utf-8",
@@ -521,11 +521,14 @@ function pushTokenToRemote(
       const sedCompany = tokenInfo.companyFrom
         ? `sed -i 's/company_from=[a-f0-9]\\{20,\\}/company_from=${tokenInfo.companyFrom}/g' '${remotePath}'`
         : "";
-      // 替换 LEXIANG_TOKEN 环境变量形式
-      const sedEnvToken = `sed -i 's/\\(LEXIANG_TOKEN[\"'\\x27]*[[:space:]]*[:=][[:space:]]*[\"'\\x27]*\\)lxmcp_[a-f0-9]\\{16,\\}/\\1${tokenInfo.accessToken}/g' '${remotePath}'`;
+      // 替换 LEXIANG_TOKEN 环境变量形式（简化正则避免嵌套引号转义问题）
+      const sedEnvToken = `sed -i 's/lxmcp_[a-f0-9]\\{16,\\}/${tokenInfo.accessToken}/g' '${remotePath}'`;
 
-      const commands = [sedAccessToken, sedBearer, sedEnvToken];
+      const commands = [sedAccessToken, sedBearer];
       if (sedCompany) commands.push(sedCompany);
+      // sedEnvToken 作为兜底全局替换放最后（它会匹配所有 lxmcp_ token）
+      // 注意：前面的 sed 已经替换了 access_token= 和 Bearer 格式，这里再跑一次全局替换确保不遗漏
+      commands.push(sedEnvToken);
       const fullCmd = `ssh -o ConnectTimeout=10 -o BatchMode=yes ${sshTarget} "${commands.join(" && ")}"`;
 
       try {

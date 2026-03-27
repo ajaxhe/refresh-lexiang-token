@@ -108,6 +108,7 @@ npx tsx "$SKILL_DIR/refresh-token.ts" --headless --push-to "root@server1,root@se
 **Agent 平台全局配置：**
 - `~/.workbuddy/mcp.json` — WorkBuddy 全局 MCP 配置
 - `~/.openclaw/mcp.json` — OpenClaw 全局 MCP 配置
+- `~/.openclaw/openclaw.json` — OpenClaw 主配置（含 mcp.servers 和 mcp.skills）
 
 **mcporter 配置：**
 - `~/.mcporter/mcp.json` — mcporter MCP 配置（Bearer 认证）
@@ -119,6 +120,13 @@ npx tsx "$SKILL_DIR/refresh-token.ts" --headless --push-to "root@server1,root@se
 
 **项目级配置：**
 - `~/clawd/config/mcporter.json` — 项目级 mcporter 配置
+
+**远程服务器自动发现（`--push-to` 模式）：**
+- `~/.workbuddy/mcp.json`
+- `~/.openclaw/mcp.json`
+- `~/.openclaw/openclaw.json`
+- `~/.mcporter/mcp.json`
+- `~/.mcporter/mcporter.json`
 
 如果需要更新额外的配置文件，通过 `--config-files` 参数指定。
 
@@ -140,7 +148,7 @@ npx tsx "<skill_path>/scripts/refresh-token.ts" --headless
 {
   "success": true,
   "accessToken": "lxmcp_xxxx...xxxx",
-  "companyFrom": "e6c565d6d16811efac17768586f8a025",
+  "companyFrom": "your_company_id_here",
   "updatedFiles": [
     "/Users/xxx/.workbuddy/mcp.json",
     "/Users/xxx/.mcporter/mcp.json",

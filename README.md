@@ -86,6 +86,7 @@ npx tsx ~/.openclaw/skills/refresh-lexiang-token/scripts/refresh-token.ts \
 |---------|------|
 | `~/.workbuddy/mcp.json` | WorkBuddy 全局 MCP 配置 |
 | `~/.openclaw/mcp.json` | OpenClaw 全局 MCP 配置 |
+| `~/.openclaw/openclaw.json` | OpenClaw 主配置（含 mcp.servers / mcp.skills） |
 | `~/.mcporter/mcp.json` | mcporter MCP 配置（Bearer 认证） |
 | `~/.mcporter/mcporter.json` | mcporter CLI 配置（URL query 认证） |
 | `~/.workbuddy/skills/*/mcp.json` | 含 "lexiang" 的 skill 配置 |
