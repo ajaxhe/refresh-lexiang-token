@@ -6,3 +6,6 @@
 
 # Node modules
 node_modules/
+
+# Local configuration cache (contains server paths, never commit)
+.local-config.json
