@@ -144,10 +144,10 @@ async function extractToken(
     console.log("🔑 需要登录，请在浏览器中完成登录操作...");
     console.log("   （登录成功后页面会自动跳转到 MCP 配置页面）");
 
-    // 等待用户登录并跳转回 MCP 页面
+    // 等待用户登录并跳转回 MCP 或新版 Agent 页面
     try {
-      await page.waitForURL("**/mcp**", { timeout });
-      console.log("✅ 登录成功，已跳转到 MCP 页面");
+      await page.waitForURL(/\/(mcp|ai\/)/, { timeout });
+      console.log("✅ 登录成功，已跳转到配置页面");
       // 等待页面 JS 渲染
       await page.waitForTimeout(3000);
     } catch {
@@ -159,6 +159,154 @@ async function extractToken(
   // 等待页面 JS 渲染完成，尝试多种策略提取 token
   console.log("⏳ 等待页面渲染...");
   await page.waitForTimeout(3000);
+
+  // 策略0：新版页面 /ai/claw —— 需要点击"查看个人凭证"按钮展开 token
+  const newPageUrl = page.url();
+  if (newPageUrl.includes("/ai/claw") || newPageUrl.includes("/ai/")) {
+    console.log("📌 检测到新版乐享 Agent 页面，尝试提取凭证...");
+
+    // 方法A：拦截剪贴板 API，然后点击"一键复制安装指令"按钮获取完整配置
+    let clipboardContent = '';
+    try {
+      // 注入剪贴板拦截
+      await page.evaluate(() => {
+        (window as any).__clipboardData = '';
+        const originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+        navigator.clipboard.writeText = async (text: string) => {
+          (window as any).__clipboardData = text;
+          return originalWriteText(text);
+        };
+        // 也拦截 execCommand('copy')
+        const originalExecCommand = document.execCommand.bind(document);
+        document.execCommand = (command: string, ...args: any[]) => {
+          if (command === 'copy') {
+            const selection = window.getSelection();
+            if (selection) {
+              (window as any).__clipboardData = selection.toString();
+            }
+          }
+          return originalExecCommand(command, ...args);
+        };
+      });
+
+      // 点击"一键复制安装指令"按钮
+      const copyInstBtn = page.getByText('一键复制安装指令');
+      if (await copyInstBtn.isVisible({ timeout: 3000 })) {
+        await copyInstBtn.click();
+        console.log('   ✅ 已点击 [一键复制安装指令]');
+        await page.waitForTimeout(2000);
+
+        clipboardContent = await page.evaluate(() => (window as any).__clipboardData || '');
+        if (clipboardContent) {
+          console.log(`   📋 剪贴板内容长度: ${clipboardContent.length}`);
+          // 从复制内容中提取 token
+          const tokenMatch = clipboardContent.match(/lxmcp_[a-f0-9]{16,}/i);
+          if (tokenMatch) {
+            console.log(`   ✅ 从复制内容中提取到 token: ${tokenMatch[0].substring(0, 20)}...`);
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`   ⚠️ 剪贴板拦截方式失败: ${(e as Error).message}`);
+    }
+
+    // 方法B：查找页面中所有 React fiber / Vue 数据中的 token
+    if (!clipboardContent || !/lxmcp_[a-f0-9]{16,}/.test(clipboardContent)) {
+      try {
+        const reactToken = await page.evaluate(() => {
+          // 遍历所有元素的 React fiber，查找 token 数据
+          const allEls = document.querySelectorAll('*');
+          for (const el of allEls) {
+            // React fiber
+            const fiberKey = Object.keys(el).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+            if (fiberKey) {
+              const fiber = (el as any)[fiberKey];
+              const str = JSON.stringify(fiber?.memoizedProps || {});
+              const match = str.match(/lxmcp_[a-f0-9]{16,}/i);
+              if (match) return match[0];
+            }
+            // Vue
+            if ((el as any).__vue_app__) {
+              const str = JSON.stringify((el as any).__vue_app__.config?.globalProperties || {});
+              const match = str.match(/lxmcp_[a-f0-9]{16,}/i);
+              if (match) return match[0];
+            }
+          }
+          return '';
+        });
+        if (reactToken) {
+          clipboardContent = reactToken;
+          console.log(`   ✅ 从 React state 中提取到 token: ${reactToken.substring(0, 20)}...`);
+        }
+      } catch {
+        console.log('   ⚠️ React/Vue state 提取失败');
+      }
+    }
+
+    // 方法C：查找页面网络请求中的 token（从 performance entries）
+    if (!clipboardContent || !/lxmcp_[a-f0-9]{16,}/.test(clipboardContent)) {
+      try {
+        const perfToken = await page.evaluate(() => {
+          const entries = performance.getEntriesByType('resource');
+          for (const entry of entries) {
+            const match = entry.name.match(/lxmcp_[a-f0-9]{16,}/i);
+            if (match) return match[0];
+          }
+          return '';
+        });
+        if (perfToken) {
+          clipboardContent = perfToken;
+          console.log(`   ✅ 从网络请求中提取到 token: ${perfToken.substring(0, 20)}...`);
+        }
+      } catch {
+        console.log('   ⚠️ 网络请求提取失败');
+      }
+    }
+
+    // 如果从复制内容中获取到了 token，直接注入到后续的提取流程
+    if (clipboardContent && /lxmcp_[a-f0-9]{16,}/.test(clipboardContent)) {
+      // 将 token 写入一个隐藏元素，以便后续的 evaluate 能提取到
+      const extractedToken = clipboardContent.match(/lxmcp_[a-f0-9]{16,}/i)?.[0] || '';
+      await page.evaluate((token) => {
+        const div = document.createElement('div');
+        div.id = '__injected_token__';
+        div.style.display = 'none';
+        div.textContent = token;
+        document.body.appendChild(div);
+      }, extractedToken);
+    }
+
+    // 方法D：尝试点击"查看个人凭证"，然后找到显示/眼睛按钮
+    try {
+      const viewCredBtn = page.getByText('查看个人凭证');
+      if (await viewCredBtn.isVisible({ timeout: 3000 })) {
+        await viewCredBtn.click();
+        console.log('   ✅ 已点击 [查看个人凭证]');
+        await page.waitForTimeout(1500);
+
+        // 查找凭证区域附近的 SVG 眼睛图标或"显示"/"复制"按钮
+        const credSection = page.locator(':has-text("凭证：")').last();
+        // 尝试点击凭证区域内的所有可交互元素（图标按钮等）
+        const buttons = credSection.locator('button, svg, [role="button"], [class*="icon"], [class*="eye"], [class*="copy"], [class*="show"]');
+        const btnCount = await buttons.count();
+        console.log(`   🔍 凭证区域发现 ${btnCount} 个可交互元素`);
+        for (let i = 0; i < btnCount && i < 10; i++) {
+          try {
+            const btn = buttons.nth(i);
+            if (await btn.isVisible()) {
+              await btn.click();
+              await page.waitForTimeout(500);
+            }
+          } catch { /* ignore */ }
+        }
+        await page.waitForTimeout(1000);
+      }
+    } catch {
+      console.log('   ⚠️ 凭证展开失败');
+    }
+
+    await page.waitForTimeout(1000);
+  }
 
   // 策略1：从页面中查找 access_token 文本
   const tokenInfo = await page.evaluate(() => {
@@ -244,20 +392,100 @@ async function extractToken(
       }
     }
 
+    // 尝试从注入的隐藏元素获取（策略0注入的）
+    if (!token) {
+      const injected = document.getElementById('__injected_token__');
+      if (injected && injected.textContent) {
+        const m = injected.textContent.match(/lxmcp_[a-f0-9]{16,}/i);
+        if (m) token = m[0];
+      }
+    }
+
+    // 尝试从所有元素的 textContent 做宽松匹配（lxmcp_ + 至少 16 位 hex）
+    if (!token) {
+      const allElements = document.querySelectorAll('*');
+      for (const el of allElements) {
+        if (el.children.length === 0 && el.textContent) {
+          const m = el.textContent.match(/lxmcp_[a-f0-9]{16,}/i);
+          if (m && m[0] !== 'lxmcp_xxxx') {
+            token = m[0];
+            break;
+          }
+        }
+      }
+    }
+
     return { token, company };
   });
 
   if (!tokenInfo.token) {
     // 策略2：尝试截图以便调试
     console.log("⚠️  未能从页面自动提取 token，尝试截图...");
+
+    // 额外调试：滚动到凭证区域并截图
+    await page.evaluate(() => {
+      // 找到包含"凭证"的元素并滚动到那里
+      const elements = document.querySelectorAll('*');
+      for (const el of elements) {
+        if (el.textContent && el.textContent.includes('凭证：') && el.children.length < 3) {
+          el.scrollIntoView({ behavior: 'instant', block: 'center' });
+          break;
+        }
+      }
+    });
+    await page.waitForTimeout(1000);
+
     const screenshotPath = path.join(process.cwd(), "lexiang-mcp-page.png");
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await page.screenshot({ path: screenshotPath, fullPage: false });
     console.log(`📸 页面截图已保存到: ${screenshotPath}`);
 
     // 策略3：打印页面内容用于调试
     const pageText = await page.evaluate(() => document.body.innerText);
     console.log("📄 页面文本内容 (前2000字符):");
     console.log(pageText.substring(0, 2000));
+
+    // 策略4：打印所有 input/textarea 的值和所有 data 属性
+    const debugInfo = await page.evaluate(() => {
+      const info: string[] = [];
+      // 所有 input 和 textarea
+      document.querySelectorAll('input, textarea').forEach((el, i) => {
+        const inp = el as HTMLInputElement;
+        info.push(`input[${i}] type=${inp.type} name=${inp.name} value=${inp.value.substring(0, 100)}`);
+      });
+      // 所有含 lxmcp 的元素
+      const allEls = document.querySelectorAll('*');
+      for (const el of allEls) {
+        for (const attr of el.attributes) {
+          if (attr.value && attr.value.includes('lxmcp')) {
+            info.push(`attr: ${el.tagName}[${attr.name}]=${attr.value.substring(0, 100)}`);
+          }
+        }
+      }
+      // 查找凭证附近的元素
+      for (const el of allEls) {
+        if (el.children.length === 0 && el.textContent && /lxmcp_[a-f0-9]{8,}/.test(el.textContent)) {
+          info.push(`text-node: ${el.tagName}.${el.className} = ${el.textContent.substring(0, 100)}`);
+        }
+      }
+      return info;
+    });
+    console.log("🔍 调试信息:");
+    debugInfo.forEach(d => console.log(`   ${d}`));
+
+    // 策略5：获取凭证区域的 HTML
+    const credHtml = await page.evaluate(() => {
+      const allEls = document.querySelectorAll('*');
+      for (const el of allEls) {
+        if (el.textContent && el.textContent.includes('有效期至') && el.innerHTML.length < 5000) {
+          return el.innerHTML.substring(0, 3000);
+        }
+      }
+      return '';
+    });
+    if (credHtml) {
+      console.log("🔍 凭证区域 HTML (前 1500 字符):");
+      console.log(credHtml.substring(0, 1500));
+    }
 
     return null;
   }
